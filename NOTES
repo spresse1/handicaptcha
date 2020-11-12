@@ -1,0 +1,3 @@
+May be more meaningful to give IAM user only required permissions:
+
+  - ec2:RunInstances
