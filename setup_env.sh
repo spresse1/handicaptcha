@@ -64,44 +64,110 @@ then
 fi
 
 # exit 0
+# We want to use some VPC features, so make one...
+VPCID=$(aws ec2 describe-vpcs --filter Name=tag-key,Values=handicaptcha | \
+	jq -r ".Vpcs[0].VpcId" )
+if [ "$VPCID" == "null" ]
+then
+	echo "Creating VPC"
+	VPCID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/28 | jq -r ".Vpc.VpcId" )
+	aws ec2 create-tags --resources $VPCID --tags Key=handicaptcha,Value=handicaptcha
 
-SGS=$(aws ec2 describe-security-groups --group-names handicaptcha \
-	2>/dev/null || : )
-if [ -z "$SGS" ]
+	# We also have to create a subnet
+	SUBNETID=$(aws ec2 create-subnet --cidr-block 10.0.0.0/28 \
+		--vpc-id $VPCID | jq -r ".Subnet.SubnetId" )
+	aws ec2 create-tags --resources $SUBNETID \
+		--tags Key=handicaptcha,Value=handicaptcha
+	aws ec2 modify-subnet-attribute --subnet-id $SUBNETID \
+		--map-public-ip-on-launch
+fi
+VPCID=$(aws ec2 describe-vpcs --filter Name=tag-key,Values=handicaptcha | \
+	jq -r ".Vpcs[0].VpcId" )
+SUBNETID=$(aws ec2 describe-subnets \
+	--filters Name=vpc-id,Values=$VPCID Name=tag-key,Values=handicaptcha | \
+	jq -r ".Subnets[0].SubnetId" )
+echo "VPC ID: $VPCID"
+echo "Subnet ID: $SUBNETID"
+
+SGS=$(aws ec2 describe-security-groups \
+	--filters Name=vpc-id,Values=$VPCID \
+		Name=group-name,Values=handicaptcha \
+	| jq -r ".SecurityGroups[0].GroupId" )
+if [ "$SGS" == "null" ]
 then
 	echo "Creating Security Group"
 	SG_ID=$(aws ec2 create-security-group \
 		--group-name handicaptcha \
-		--description "handicaptcha permissions" | jq -r ".GroupId" )
+		--description "handicaptcha permissions" \
+		--vpc-id $VPCID | jq -r ".GroupId" )
 	# Then add rules to allow in SSH...
 	aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
-		--protocol tcp --port 22 --cidr '0.0.0.0/0'
+		--protocol tcp --port 0-65535 --cidr '0.0.0.0/0'
+	aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+		--protocol icmp --port -1 --cidr '0.0.0.0/0'
 
 fi
-SG_ID=$(aws ec2 describe-security-groups --group-names handicaptcha \
+SG_ID=$(aws ec2 describe-security-groups \
+	--filters Name=vpc-id,Values=$VPCID \
+		Name=group-name,Values=handicaptcha \
 	| jq -r ".SecurityGroups[0].GroupId" )
 echo "Security group ID: $SG_ID"
+
+GWID=$(aws ec2 describe-internet-gateways \
+	--filters Name=attachment.vpc-id,Values=$VPCID \
+		Name=tag-key,Values=handicaptcha | \
+	jq -r ".InternetGateways[0].InternetGatewayId" )
+if [ "$GWID" == "null" ]
+then
+	echo "Creating Internet Gateway"
+	GWID=$(aws ec2 create-internet-gateway | \
+		jq -r ".InternetGateway.InternetGatewayId" )
+	aws ec2 create-tags --resources $GWID \
+		--tags Key=handicaptcha,Value=handicaptcha
+	aws ec2 attach-internet-gateway --vpc-id $VPCID \
+		--internet-gateway-id $GWID
+fi
+
+GWID=$(aws ec2 describe-internet-gateways \
+        --filters Name=attachment.vpc-id,Values=$VPCID \
+                Name=tag-key,Values=handicaptcha | \
+        jq -r ".InternetGateways[0].InternetGatewayId" )
+echo "Internet Gateway ID: $GWID"
+RTID=$(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$VPCID | \
+	jq -r ".RouteTables[0].RouteTableId" )
+RTSTATE=$(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$VPCID | \
+	jq -r '.RouteTables[0].Routes[] | select(.DestinationCidrBlock == "0.0.0.0/0")' )
+if [ -z "$RTSTATE" ]
+then
+	echo "Adding route to Internet Gateway..."
+	aws ec2 create-route --route-table-id $RTID \
+		--destination-cidr-block '0.0.0.0/0' \
+		--gateway-id $GWID > /dev/null
+fi
 
 # Start spinning up the instance...
 INSTANCE_ID=$( aws ec2 describe-instances \
 	--filter Name=tag-key,Values=handicaptcha \
-	--filter Name=instance-state-name,Values=running | \
+	--filter Name=instance-state-name,Values=running \
+	--filter Name=vpc-id,Values=$VPCID | \
 	jq -r ".Reservations[0].Instances[0].InstanceId" )
-
 if [ "$INSTANCE_ID" == "null" ]
 then
+	echo "Creating instance"
 	INSTANCE_CREATE_OUT=$(aws ec2 run-instances --image-id "$AWS_AMI_ID" \
 		--count 1 --instance-type "$AWS_INSTANCE_TYPE" \
 		--key-name handicaptcha --security-group-ids "$SG_ID" \
+		--subnet-id $SUBNETID \
 		--enable-api-termination )
-	INSTANCE_ID=$(echo $INSTANCE_CREATE_OUT | \
+	INSTANCE_ID=$(echo "$INSTANCE_CREATE_OUT" | \
 		jq -r '.Instances[0].InstanceId')
+	sleep 10
+	aws ec2 create-tags --resources $INSTANCE_ID --tags Key=vpc,Value=$VPCID
 	echo -n "Waiting for instance to launch ($INSTANCE_ID)..."
 	aws ec2 wait instance-running --instance-ids $INSTANCE_ID
 	status=initializing
 	while [ "$( aws ec2 describe-instance-status --instance-ids $INSTACE_ID | jq -r ".InstanceStatuses[0].InstanceStatus.Details[0].Status" )" != "passed" ]
 	do
-		aws ec2 describe-instance-status --instance-ids $INSTACE_ID | jq -r ".InstanceStatuses[0].InstanceStatus.Details[0].Status"
 		sleep 10
 		echo -n "."
 	done
@@ -110,7 +176,8 @@ fi
 
 INSTANCE_ID=$( aws ec2 describe-instances \
 	--filter Name=tag-key,Values=handicaptcha \
-	--filter Name=instance-state-name,Values=running | \
+	--filter Name=instance-state-name,Values=running \
+	--filter Name=vpc-id,Values=$VPCID | \
 	jq -r ".Reservations[0].Instances[0].InstanceId" )
 
 echo "AWS Instance ID: $INSTANCE_ID"
@@ -118,20 +185,54 @@ echo "AWS Instance ID: $INSTANCE_ID"
 ###################################
 # Update and install requirements #
 ###################################
+#aws ec2 describe-instances --instance-ids $INSTANCE_ID
 INSTANCE_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID | \
-	jq -r ".Reservations[0].Instances[0].PublicDnsName")
+	jq -r ".Reservations[0].Instances[0].PublicIpAddress")
 
 echo "DNS Name: $INSTANCE_DNS"
+
+ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+	"mkdir handicaptcha"
+
 scp -o "StrictHostKeyChecking=no" -i ./handicaptcha \
-	-r ${CODEDIR}/code ec2-user@$INSTANCE_DNS:handicaptcha
+	-r ${CODEDIR}/code/* ec2-user@$INSTANCE_DNS:handicaptcha
 echo "SCP done"
 
 ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
-	"sudo yum update -y; sudo yum install -y python3-pip; cd handicaptcha"
+	"sudo yum update -y &&
+	sudo amazon-linux-extras install epel &&
+	sudo yum install -y python3-pip chromium chromedriver xorg-x11-xauth &&
+	sudo pip3 install awscli selenium &&
+	sudo pip3 install -r handicaptcha/requirements.txt"
+#	Ksudo amazon-linux-extras install mate-desktop1.x &&
+#	sudo bash -c 'echo PREFERRED=/usr/bin/mate-session > /etc/sysconfig/desktop' &&
+
+AWS_ACCESS_KEY=$(aws configure get aws_access_key_id)
+AWS_SECRET_KEY=$(aws configure get aws_secret_access_key)
+AWS_REGION=$(aws configure get region)
+
+ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+	"aws configure set region $AWS_REGION
+	aws configure set aws_access_key_id $AWS_ACCESS_KEY
+	aws configure set aws_secret_access_key $AWS_SECRET_KEY"
+
 
 echo "Cleanup:
 aws ec2 delete-key-pair --key-name handicaptcha
 aws ec2 terminate-instances --instance-ids $INSTANCE_ID
-[ wait a bit ]
-aws ec2 delete-security-group --group-name handicaptcha
+# Go into AWS console and delete internet gateway, then the VPC as a whole
 "
+#aws ec2 detach-internet-gateway --internet-gateway-id $GWID
+#[ wait a bit ]
+#aws ec2 delete-security-group --group-id $SG_ID
+#aws ec2 delete-subnet --subnet-id $SUBNETID
+#aws ec2 delete-vpc --vpc-id $VPCID
+#"
+
+
+echo "VPC ID: $VPCID"
+echo "Subnet ID: $SUBNETID"
+echo "Security group ID: $SG_ID"
+echo "Internet Gateway ID: $GWID"
+echo "AWS Instance ID: $INSTANCE_ID"
+echo "DNS Name: $INSTANCE_DNS"
