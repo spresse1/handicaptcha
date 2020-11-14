@@ -50,13 +50,17 @@ class AWSRotator:
         except ClientError as e:
             print(e)
             raise e
+    
+    def __enter__(self):
+        self.associate()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.disassociate()
 
 # For testing...
 if __name__=="__main__":
     a = AWSRotator()
-    a.associate()
-    print(requests.get("https://v4.ident.me").text)
-    a.disassociate()
-    a.associate()
-    print(requests.get("https://v4.ident.me").text)
-    a.disassociate()
+    with a:
+        print(requests.get("https://v4.ident.me").text)
+    with a:
+        print(requests.get("https://v4.ident.me").text)
