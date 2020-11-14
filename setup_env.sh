@@ -18,7 +18,7 @@ AWS_PROFILE=handicaptcha
 AWS_INSTANCE_TYPE="t1.micro"
 AWS_AMI_ID="ami-0947d2ba12ee1ff75" # Basic Amazon Linux
 
-CLOUDFLARE_NETMASKS="$(curl -s https://www.cloudflare.com/ips-v4 | tr '\n' ' ') 176.58.123.25/32"
+CLOUDFLARE_NETMASKS="$(curl -s https://www.cloudflare.com/ips-v4 | tr '\n' ' ') 176.58.123.25"
 
 RUNDIR=. #$(mktemp -d ./tmp_XXXXXXXX)
 SSH_KEY_LOCATION=handicaptcha
@@ -263,7 +263,10 @@ ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
 
 
 ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
-	"for IPRANGE in $CLOUDFLARE_NETMASKS; do sudo ip route add \$IPRANGE dev eth1; done"
+	"for IPRANGE in $CLOUDFLARE_NETMASKS; do 
+	if [ -z \"\$(sudo ip route | grep \$IPRANGE)\" ]; then
+		echo sudo ip route add \$IPRANGE dev eth1; 
+	fi; done"
 echo "Cleanup:
 aws ec2 delete-key-pair --key-name handicaptcha
 aws ec2 terminate-instances --instance-ids $INSTANCE_ID
