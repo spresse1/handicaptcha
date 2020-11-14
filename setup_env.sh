@@ -18,6 +18,8 @@ AWS_PROFILE=handicaptcha
 AWS_INSTANCE_TYPE="t1.micro"
 AWS_AMI_ID="ami-0947d2ba12ee1ff75" # Basic Amazon Linux
 
+CLOUDFLARE_NETMASKS="$(curl -s https://www.cloudflare.com/ips-v4 | tr '\n' ' ') 176.58.123.25/32"
+
 RUNDIR=. #$(mktemp -d ./tmp_XXXXXXXX)
 SSH_KEY_LOCATION=handicaptcha
 CODEDIR=$(pwd)
@@ -182,6 +184,49 @@ INSTANCE_ID=$( aws ec2 describe-instances \
 
 echo "AWS Instance ID: $INSTANCE_ID"
 
+#############################################
+# Create a second NIC to be our control nic #
+#############################################
+EGRESS_NWINTF_ID=$(aws ec2 describe-network-interfaces \
+	--filters Name=vpc-id,Values=$VPCID Name=description,Values=handicaptcha-outbound | \
+	jq -r ".NetworkInterfaces[0].NetworkInterfaceId")
+if [ "$EGRESS_NWINTF_ID" == "null" ]
+then
+	EGRESS_NWINTF_ID=$(aws ec2 create-network-interface --description handicaptcha-outbound \
+		--subnet-id $SUBNETID | jq -r ".NetworkInterface.NetworkInterfaceId" )
+fi
+EGRESS_NWINTF_ID=$(aws ec2 describe-network-interfaces \
+	--filters Name=vpc-id,Values=$VPCID Name=description,Values=handicaptcha-outbound | \
+	jq -r ".NetworkInterfaces[0].NetworkInterfaceId")
+
+# Check that for assigned IP
+EIP=$(aws ec2 describe-addresses --filter Name=tag-key,Values=handicaptcha-outbound | jq -r ".Addresses[0].AllocationId")
+if [ "$EIP" == "null" ]
+then
+	# Allocate and attach an IP address:
+	EIP=$(aws ec2 allocate-address --domain vpc | \
+		jq -r ".AllocationId")
+	aws ec2 create-tags --resources $EIP \
+		--tags Key=handicaptcha-outbound,Value=handicaptcha-outbound
+fi
+
+IPNICASSOC=$(aws ec2 describe-network-interfaces --network-interface-ids $EGRESS_NWINTF_ID | \
+	jq -r ".NetworkInterfaces[0].PrivateIpAddresses[0].Association.PublicIp")	
+if [ "$IPNICASSOC" == "null" ]
+then
+	aws ec2 associate-address --network-interface-id $EGRESS_NWINTF_ID \
+		--allocation-id $EIP
+fi
+
+# And associate the nic to the instance.
+NICINSTASSOC=$(aws ec2 describe-instances --instance-id $INSTANCE_ID | \
+	jq -r ".Reservations[0].Instances[0].NetworkInterfaces[] | select(.NetworkInterfaceId == \"$EGRESS_NWINTF_ID\") | .Attachment.AttachmentId")
+if [ -z "$NICINSTASSOC" ]
+then
+	aws ec2 attach-network-interface --instance-id $INSTANCE_ID \
+		--network-interface-id $EGRESS_NWINTF_ID --device-index 1 > /dev/null
+fi
+
 ###################################
 # Update and install requirements #
 ###################################
@@ -192,7 +237,7 @@ INSTANCE_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID | \
 echo "DNS Name: $INSTANCE_DNS"
 
 ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
-	"mkdir handicaptcha"
+	"mkdir -p handicaptcha"
 
 scp -o "StrictHostKeyChecking=no" -i ./handicaptcha \
 	-r ${CODEDIR}/code/* ec2-user@$INSTANCE_DNS:handicaptcha
@@ -217,6 +262,8 @@ ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
 	aws configure set aws_secret_access_key $AWS_SECRET_KEY"
 
 
+ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+	"for IPRANGE in $CLOUDFLARE_NETMASKS; do sudo ip route add \$IPRANGE dev eth1; done"
 echo "Cleanup:
 aws ec2 delete-key-pair --key-name handicaptcha
 aws ec2 terminate-instances --instance-ids $INSTANCE_ID
@@ -229,6 +276,8 @@ aws ec2 terminate-instances --instance-ids $INSTANCE_ID
 #aws ec2 delete-vpc --vpc-id $VPCID
 #"
 
+ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+	"echo \"My external IP: \$(curl -s https://v4.ident.me)\""
 
 echo "VPC ID: $VPCID"
 echo "Subnet ID: $SUBNETID"
