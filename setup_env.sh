@@ -200,23 +200,23 @@ EGRESS_NWINTF_ID=$(aws ec2 describe-network-interfaces \
 	jq -r ".NetworkInterfaces[0].NetworkInterfaceId")
 
 # Check that for assigned IP
-EIP=$(aws ec2 describe-addresses --filter Name=tag-key,Values=handicaptcha-outbound | jq -r ".Addresses[0].AllocationId")
-if [ "$EIP" == "null" ]
-then
-	# Allocate and attach an IP address:
-	EIP=$(aws ec2 allocate-address --domain vpc | \
-		jq -r ".AllocationId")
-	aws ec2 create-tags --resources $EIP \
-		--tags Key=handicaptcha-outbound,Value=handicaptcha-outbound
-fi
+#EIP=$(aws ec2 describe-addresses --filter Name=tag-key,Values=handicaptcha-outbound | jq -r ".Addresses[0].AllocationId")
+#if [ "$EIP" == "null" ]
+#then
+#	# Allocate and attach an IP address:
+#	EIP=$(aws ec2 allocate-address --domain vpc | \
+#		jq -r ".AllocationId")
+#	aws ec2 create-tags --resources $EIP \
+#		--tags Key=handicaptcha-outbound,Value=handicaptcha-outbound
+#fi
 
-IPNICASSOC=$(aws ec2 describe-network-interfaces --network-interface-ids $EGRESS_NWINTF_ID | \
-	jq -r ".NetworkInterfaces[0].PrivateIpAddresses[0].Association.PublicIp")	
-if [ "$IPNICASSOC" == "null" ]
-then
-	aws ec2 associate-address --network-interface-id $EGRESS_NWINTF_ID \
-		--allocation-id $EIP
-fi
+#IPNICASSOC=$(aws ec2 describe-network-interfaces --network-interface-ids $EGRESS_NWINTF_ID | \
+#	jq -r ".NetworkInterfaces[0].PrivateIpAddresses[0].Association.PublicIp")	
+#if [ "$IPNICASSOC" == "null" ]
+#then
+#	aws ec2 associate-address --network-interface-id $EGRESS_NWINTF_ID \
+#		--allocation-id $EIP
+#fi
 
 # And associate the nic to the instance.
 NICINSTASSOC=$(aws ec2 describe-instances --instance-id $INSTANCE_ID | \
@@ -279,8 +279,8 @@ aws ec2 terminate-instances --instance-ids $INSTANCE_ID
 #aws ec2 delete-vpc --vpc-id $VPCID
 #"
 
-ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
-	"echo \"My external IP: \$(curl -s https://v4.ident.me)\""
+#ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+#	"echo \"My external IP: \$(curl -s https://v4.ident.me)\""
 
 echo "VPC ID: $VPCID"
 echo "Subnet ID: $SUBNETID"
