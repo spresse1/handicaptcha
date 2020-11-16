@@ -230,7 +230,6 @@ fi
 ###################################
 # Update and install requirements #
 ###################################
-#aws ec2 describe-instances --instance-ids $INSTANCE_ID
 INSTANCE_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID | \
 	jq -r ".Reservations[0].Instances[0].PublicIpAddress")
 
@@ -249,8 +248,6 @@ ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
 	sudo yum install -y python3-pip chromium chromedriver xorg-x11-xauth &&
 	sudo pip3 install awscli selenium &&
 	sudo pip3 install -r handicaptcha/requirements.txt"
-#	Ksudo amazon-linux-extras install mate-desktop1.x &&
-#	sudo bash -c 'echo PREFERRED=/usr/bin/mate-session > /etc/sysconfig/desktop' &&
 
 AWS_ACCESS_KEY=$(aws configure get aws_access_key_id)
 AWS_SECRET_KEY=$(aws configure get aws_secret_access_key)
