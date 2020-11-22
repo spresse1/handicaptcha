@@ -8,14 +8,18 @@ import dns.resolver
 import socket
 import re
 import emailHandler
+import subprocess
+import tempfile
+import os
+import sqlite3
 from time import sleep
 from emailHandler import EmailServer
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 HCAPTCHA_SIGNUP_ADDR="https://dashboard.hcaptcha.com/signup?type=accessibility"
 LINK_REGEX = re.compile('http[s]{0,1}://accounts.hcaptcha.com/verify_email/[0-9a-fA-F\-]{0,36}')
@@ -26,6 +30,7 @@ parser = argparse.ArgumentParser(description="Get hCaptcha bypass cookies")
 parser.add_argument("--platform", type=str, choices=['aws'], required=True)
 parser.add_argument("--domain", type=str, required=True)
 parser.add_argument("--period", type=int, required=True)
+parser.add_argument("--max-count", type=int)
 
 rotator = None
 rotatorClasses = {
@@ -63,7 +68,39 @@ def get_email_addr(domain):
     return "%s@%s" % (uuid.uuid4(), domain)
 
 def trigger_email(addr):
-    raise NotImplementedError()
+    with tempfile.TemporaryDirectory() as tempdir:
+        subprocess.run(
+            ["firefox", "-createprofile",
+                "handicaptcha %s" % (tempdir),
+                "-no-remote"]
+        )
+        #DISPLAY=:1 firefox $URL --kiosk
+        env = os.environ.copy()
+        env["DISPLAY"] = ":1"
+        ffproc = subprocess.Popen(
+            ["firefox", HCAPTCHA_SIGNUP_ADDR, "--kiosk",
+                "--profile", tempdir],
+            env=env)
+        sleep(10)
+        # DISPLAY=:1 xdotool mousemove 630 375
+        subprocess.run(
+            ["xdotool", "mousemove", "630", "375"],
+            env=env)
+        # DISPLAY=:1 xdotool click 1
+        subprocess.run(
+            ["xdotool", "click", "1"],
+            env=env)
+        # DISPLAY=:1 xdotool type "someemail ENTER"
+        subprocess.run(
+            ["xdotool", "type", addr],
+            env=env)
+        # DISPLAY=:1 xdotool key "Return"
+        subprocess.run(
+            ["xdotool", "key", "Return"],
+            env=env)
+        
+        sleep(5)
+    return
 
 def get_accessibility_link(body):
     """Gets the link for accessibility signup out of an email body"""
@@ -72,47 +109,57 @@ def get_accessibility_link(body):
         return matches[0]
     return None
 
-def get_accessibility_cookie(link):
-    chrome_options = Options()
-    #chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--start-maximized")
-    driver = webdriver.Chrome(options=chrome_options)
+def _convert_cookie(cookie):
+    keyMap = {
+        "name": "name",
+        "value": "value",
+        "host": "domain",
+        "path": "path",
+        "expiry":"expiry",
+        # "sameSite"
+        # "secure",
+        # "httpOnly"
+    }
+
+    ret = {}
+    for key in cookie.keys():
+        if key in keyMap:
+            ret[keyMap[key]] = cookie[key]
+    print("Converted cookie: ", ret)
+    return ret
+
+# Class from selenium docs: https://selenium-python.readthedocs.io/waits.html
+class element_has_css_class(object):
+  """An expectation for checking that an element has a particular css class.
+
+  locator - used to find the element
+  returns the WebElement once it has the particular css class
+  """
+  def __init__(self, locator, css_class):
+    self.locator = locator
+    self.css_class = css_class
+
+  def __call__(self, driver):
+    element = driver.find_element(*self.locator)   # Finding the referenced element
+    if self.css_class in element.get_attribute("class"):
+        return element
+    else:
+        return False
+
+def test_cookie(cookies):
+    driver = webdriver.Firefox()
     try:
-        driver.get(link)
-
-        # Wait until we can see the button
-        WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, GET_COOKIE_BUTTON_XPATH))
-            )
-
-        print(driver.get_cookies())
-
-        print(dir(driver))
-        # driver.add_cookie({'domain': '.hcaptcha.com', 'expiry': 1608247607, 'httpOnly': True, 'name': 'session', 'path': '/', 'secure': True, 'value': 'fad254ea-63e1-43df-bfbe-ec64b6a7b6f6'})
-        # driver.add_cookie({'domain': '.hcaptcha.com', 'expiry': 1608161205, 'httpOnly': True, 'name': '__cfduid', 'path': '/', 'sameSite': 'Lax', 'secure': True, 'value': 'dbacb5aad1d90367d112cd52d3711756f1605569205'})
-        # driver.add_cookie({'domain': '.hcaptcha.com', 
-        #     'expiry': 1608161205, 
-        #     'httpOnly': True, 
-        #     'name': 'hc_accessibility', 
-        #     'path': '/',
-        #     'secure': True, 
-        #     'value': '4F2EVjOcgiQI3dG+SFG4/y2yYU6g0WS8XKX+4v9wHaPVb3VEDobj6vmyhCY+VCPEgAPd4aYNW8Vwz3cdwhfKmpkl5cLvqgy6gl03LJ+yYtunYAe7wxt1RBs+TYRGOJxeBIPg0/YjO/3rN0dJVMn5QvmDhaxpyNk1c8u2P4o0s8Zo4xpLhokhfaLKYwHe06FAlfN+B9qtg0TpZeJvfsdgpDoQ2AflwUTQuoAS1HeT5zrL6VNQoBEgoQhuhpZCQxvrtI2Sw4FT0hEwnloO8eYWhIlLrKX1JODpc6qkbUGglkDonnvQa48VKrST7Fkz9tzWVNnkQ2mfIx3/ye1HYPjO1WHFTlC9t0VSVpHyrVJzRd27YuNjjRgsi4LYKko2Tdcs7K5pvUG8HvRzfjrQ5mcIMYTwwy6dyPUU1PFWknZBG18=yhGHvNLBwpTvoo4o'})
-
-        driver.save_screenshot("screenshot_1prebutton.png")
-        
-        button = driver.find_element(By.XPATH, GET_COOKIE_BUTTON_XPATH)
-        #button.click()
-
-        import pdb; pdb.set_trace()
-        sleep(5)
-        driver.save_screenshot("screenshot_2postbutton.png")
-
-        cookieJar = driver.get_cookies()
-        print(cookieJar)
 
         driver.get("https://www.hcaptcha.com/")
 
-        driver.save_screenshot("screenshot_3precaptcha.png")
+        # Add in the cookies extracted previously.
+        for cookie in cookies:
+            driver.add_cookie(_convert_cookie(cookie))
+
+        # reload with cookies
+        driver.get("https://www.hcaptcha.com/")
+
+        driver.save_screenshot("1_screenshot_precaptcha.png")
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, '//iframe[@title="widget containing checkbox for hCaptcha security challenge"]'))
@@ -120,27 +167,79 @@ def get_accessibility_cookie(link):
         except:
             print("Couldn't find the widget!")
             return
+        sleep(3)
+        wrapper = driver.find_element(By.XPATH, '//div[@class="form-wrap homepage-version"]')
+        coordinates = wrapper.location_once_scrolled_into_view # returns dict of X, Y coordinates
+        
         iframe = driver.find_element(By.XPATH, '//iframe[@title="widget containing checkbox for hCaptcha security challenge"]')
         driver.switch_to.frame(iframe)
 
-        sleep(1)
+        sleep(10)
 
         checkbox = driver.find_elements_by_xpath('//div[@id="checkbox"]')[0]
 
-        WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, '//div[@id="checkbox"]')))
+        r = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, '//div[@id="checkbox"]')))
+        if not r:
+            print("Checkbox is not clickable?!")
+
+        sleep(1)
 
         checkbox.click()
 
-        sleep(10)
+        # Wait for it to pick up class "checked"
+        # (or not, and we return false)
+        try:
+            res = WebDriverWait(driver, 10).until(element_has_css_class((By.XPATH, '//div[@id="checkbox"]'), "checked"))
+        except TimeoutException:
+            res = False
 
-        driver.save_screenshot("screenshot_4postcaptcha.png")
+        driver.save_screenshot("2_screenshot_postcaptcha.png")
 
-        print(cookieJar)
+        return res != False
     finally:
         driver.close()
-    return cookieJar
 
-def main(args):
+def get_accessibility_cookie(link):
+    with tempfile.TemporaryDirectory() as tempdir:
+        subprocess.run(
+            ["firefox", "-createprofile",
+                "handicaptcha %s" % (tempdir),
+                "-no-remote"]
+        )
+        #DISPLAY=:1 firefox $URL --kiosk
+        env = os.environ.copy()
+        env["DISPLAY"] = ":1"
+        ffproc = subprocess.Popen(
+            ["firefox", link, "--kiosk",
+                "--profile", tempdir],
+            env=env)
+        sleep(10)
+        #DISPLAY=:1 xdotool mousemove 385 510
+        subprocess.run(
+            ["xdotool", "mousemove", "385", "510"],
+            env=env)
+        subprocess.run(
+            ["xdotool", "click", "1"],
+            env=env)
+        
+        sleep(5)
+
+        ffproc.terminate()
+        import pdb; pdb.set_trace()
+        conn = sqlite3.connect(os.path.join(tempdir, "cookies.sqlite"))
+        with conn:
+            res = conn.execute("select * from moz_cookies where host=\".hcaptcha.com\"")
+        cookies = []
+        for row in res:
+            cookie = {}
+            for col in range(len(res.description)):
+                cookie[res.description[col][0]] = row[col]
+            cookies.append(cookie)
+        print(cookies)
+        pass
+    return cookies
+
+def main(args, rotator):
     if not check_domain_config(args.domain):
         print("Unable to verify that %s is set up correctly for mail; check DNS configuration" % args.domain)
         return
@@ -148,12 +247,18 @@ def main(args):
     es = EmailServer()
 
     count = 0
-    while count <0:
+    while count <1:
+        # fetch new instance IP
+        # TODO, invoke
+
         addr = get_email_addr(args.domain)
         print("Addr is: ", addr)
         count += 1
 
         # Do the sign up
+        trigger_email("hcaptchatest4@pressers.name")
+
+        return
 
         # Wait for email...
         m = es.getEmail()
@@ -165,17 +270,30 @@ def main(args):
         link = get_accessibility_link(body)
 
         # Open that in a broswer, click the button, get cookie.
+        cookieJar = get_accessibility_cookie(link)
 
+        if test_cookie(cookieJar):
+            print("Success!", cookieJar)
+        else:
+            raise Exception("Cookie didn't work!")
+
+        # Write cookies somewhere?
 
 if __name__=="__main__":
-    #args = parser.parse_args()
+    args = parser.parse_args()
 
-    #rotator = rotatorClasses[args.platform]
+    rotator = rotatorClasses[args.platform]
 
-    #main(args)
+    main(args, rotator)
 
     #with open("../testemaildata") as f:
     #    text = "\r\n".join(f.readlines())
     #    body = emailHandler.decodeEmailBody(text).decode("UTF-8")
     #    print(get_accessibility_link(body))
-    print(get_accessibility_cookie("https://accounts.hcaptcha.com/verify_email/21933c8a-2034-4bff-9816-5aed2558f698"))
+    #cookieJar = get_accessibility_cookie("https://accounts.hcaptcha.com/verify_email/")
+    #print(cookieJar)
+    #res = test_cookie(cookieJar)
+    #if res:
+    #    print("It worked!")
+    #else:
+    #    print("No good.")
