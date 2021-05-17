@@ -15,8 +15,9 @@ fi
 # Basic variables #
 ###################
 AWS_PROFILE=handicaptcha
-AWS_INSTANCE_TYPE="t1.micro"
-AWS_AMI_ID="ami-0947d2ba12ee1ff75" # Basic Amazon Linux
+AWS_INSTANCE_TYPE="t2.micro"
+#AWS_AMI_ID="ami-0947d2ba12ee1ff75" # Basic Amazon Linux
+AWS_AMI_ID="ami-0885b1f6bd170450c" # Ubuntu 20.04
 
 CLOUDFLARE_NETMASKS="$(curl -s https://www.cloudflare.com/ips-v4 | tr '\n' ' ') 176.58.123.25"
 
@@ -156,6 +157,11 @@ INSTANCE_ID=$( aws ec2 describe-instances \
 if [ "$INSTANCE_ID" == "null" ]
 then
 	echo "Creating instance"
+	echo aws ec2 run-instances --image-id "$AWS_AMI_ID" \
+		--count 1 --instance-type "$AWS_INSTANCE_TYPE" \
+		--key-name handicaptcha --security-group-ids "$SG_ID" \
+		--subnet-id $SUBNETID \
+		--enable-api-termination
 	INSTANCE_CREATE_OUT=$(aws ec2 run-instances --image-id "$AWS_AMI_ID" \
 		--count 1 --instance-type "$AWS_INSTANCE_TYPE" \
 		--key-name handicaptcha --security-group-ids "$SG_ID" \
@@ -235,35 +241,42 @@ INSTANCE_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID | \
 
 echo "DNS Name: $INSTANCE_DNS"
 
-ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ubuntu@$INSTANCE_DNS \
 	"mkdir -p handicaptcha"
 
 scp -o "StrictHostKeyChecking=no" -i ./handicaptcha \
-	-r ${CODEDIR}/code/* ec2-user@$INSTANCE_DNS:handicaptcha
+	-r ${CODEDIR}/code/* ubuntu@$INSTANCE_DNS:handicaptcha
 echo "SCP done"
 
-ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
-	"sudo yum update -y &&
-	sudo amazon-linux-extras install epel &&
-	sudo yum install -y python3-pip chromium chromedriver xorg-x11-xauth &&
-	sudo pip3 install awscli selenium &&
+ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ubuntu@$INSTANCE_DNS \
+	"sudo apt-get update -y &&
+	sudo apt-get dist-upgrade -y &&
+	sudo apt-get install -y python3-pip xinit tigervnc-standalone-server x11-apps firefox firefox-geckodriver xdotool &&
+	sudo pip3 install awscli selenium && 
 	sudo pip3 install -r handicaptcha/requirements.txt"
 
 AWS_ACCESS_KEY=$(aws configure get aws_access_key_id)
 AWS_SECRET_KEY=$(aws configure get aws_secret_access_key)
 AWS_REGION=$(aws configure get region)
 
-ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ubuntu@$INSTANCE_DNS \
 	"aws configure set region $AWS_REGION
 	aws configure set aws_access_key_id $AWS_ACCESS_KEY
 	aws configure set aws_secret_access_key $AWS_SECRET_KEY"
 
-
-ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ubuntu@$INSTANCE_DNS \
 	"for IPRANGE in $CLOUDFLARE_NETMASKS; do 
 	if [ -z \"\$(sudo ip route | grep \$IPRANGE)\" ]; then
 		echo sudo ip route add \$IPRANGE dev eth1; 
 	fi; done"
+
+# Start up VNC server....
+ssh -XC -o "StrictHostKeyChecking=no" -i ./handicaptcha ubuntu@$INSTANCE_DNS \
+	"echo -e \"testpass\ntestpass\nn\" | vncpasswd &&
+	sudo xauth add \$(xauth -f ~ubuntu/.Xauthority list|tail -1) &&
+	vncserver -xstartup $(which xeyes) &
+	sudo iptables -A PREROUTING -t nat -i eth0 -p tcp --dport 25 -j REDIRECT --to-port 2525"
+
 echo "Cleanup:
 aws ec2 delete-key-pair --key-name handicaptcha
 aws ec2 terminate-instances --instance-ids $INSTANCE_ID
@@ -276,7 +289,7 @@ aws ec2 terminate-instances --instance-ids $INSTANCE_ID
 #aws ec2 delete-vpc --vpc-id $VPCID
 #"
 
-#ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ec2-user@$INSTANCE_DNS \
+#ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ubuntu@$INSTANCE_DNS \
 #	"echo \"My external IP: \$(curl -s https://v4.ident.me)\""
 
 echo "VPC ID: $VPCID"
