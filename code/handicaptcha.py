@@ -2,6 +2,7 @@
 
 import argparse
 import iprotator.aws
+import iprotator.null
 import uuid
 import requests
 import dns.resolver
@@ -11,7 +12,10 @@ import emailHandler
 import subprocess
 import tempfile
 import os
+import json
 import sqlite3
+import random
+import string
 from time import sleep
 from emailHandler import EmailServer
 from selenium import webdriver
@@ -26,16 +30,20 @@ LINK_REGEX = re.compile('http[s]{0,1}://accounts.hcaptcha.com/verify_email/[0-9a
 
 GET_COOKIE_BUTTON_XPATH = '//button[@data-cy="setAccessibilityCookie"]'
 
-parser = argparse.ArgumentParser(description="Get hCaptcha bypass cookies")
-parser.add_argument("--platform", type=str, choices=['aws'], required=True)
-parser.add_argument("--domain", type=str, required=True)
-parser.add_argument("--period", type=int, required=True)
-parser.add_argument("--max-count", type=int)
-
 rotator = None
 rotatorClasses = {
-    'aws': iprotator.aws.AWSRotator
+    'aws': iprotator.aws.AWSRotator,
+    'null': iprotator.null.NullRotator,
 }
+
+parser = argparse.ArgumentParser(description="Get hCaptcha bypass cookies")
+parser.add_argument("--platform", type=str, choices=rotatorClasses.keys(), required=True)
+parser.add_argument("--domain", type=str, required=True)
+parser.add_argument("--period", type=int, required=True)
+parser.add_argument("--outfile", type=str, required=True, 
+    help="File to write successful cookie fetches to. JSON blobs of jars, one per line.")
+parser.add_argument("--max-count", type=int)
+
 
 def check_domain_config(domain):
     my_ip = requests.get("http://169.254.169.254/latest/meta-data/public-ipv4").text
@@ -65,7 +73,7 @@ def check_domain_config(domain):
     return True
 
 def get_email_addr(domain):
-    return "%s@%s" % (uuid.uuid4(), domain)
+    return "%s@%s" % (''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(random.randint(1,20))), domain)
 
 def trigger_email(addr):
     with tempfile.TemporaryDirectory() as tempdir:
@@ -81,25 +89,36 @@ def trigger_email(addr):
             ["firefox", HCAPTCHA_SIGNUP_ADDR, "--kiosk",
                 "--profile", tempdir],
             env=env)
-        sleep(10)
+        print("firefox open...")
+        sleep(15)
         # DISPLAY=:1 xdotool mousemove 630 375
+        # Forces focus on the window
+        print("moving mouse...")
         subprocess.run(
-            ["xdotool", "mousemove", "630", "375"],
+            ["xdotool", "mousemove", "630", "440"],
             env=env)
-        # DISPLAY=:1 xdotool click 1
+        # Tab key to get to the field
+        print("pressing tab")
         subprocess.run(
-            ["xdotool", "click", "1"],
+            ["xdotool", "key", "Tab"],
             env=env)
-        # DISPLAY=:1 xdotool type "someemail ENTER"
-        subprocess.run(
-            ["xdotool", "type", addr],
-            env=env)
+        # DISPLAY=:1 xdotool type "someemail"
+        print("typing")
+        for char in addr:
+            sleep(random.uniform(0,5))
+            subprocess.run(
+                ["xdotool", "type", char],
+                env=env)
         # DISPLAY=:1 xdotool key "Return"
+        sleep(random.uniform(0,5))
+        print("Pressing return")
         subprocess.run(
             ["xdotool", "key", "Return"],
             env=env)
         
-        sleep(5)
+        sleep(15)
+
+        ffproc.terminate()
     return
 
 def get_accessibility_link(body):
@@ -213,7 +232,7 @@ def get_accessibility_cookie(link):
             ["firefox", link, "--kiosk",
                 "--profile", tempdir],
             env=env)
-        sleep(10)
+        sleep(15)
         #DISPLAY=:1 xdotool mousemove 385 510
         subprocess.run(
             ["xdotool", "mousemove", "385", "510"],
@@ -225,7 +244,6 @@ def get_accessibility_cookie(link):
         sleep(5)
 
         ffproc.terminate()
-        import pdb; pdb.set_trace()
         conn = sqlite3.connect(os.path.join(tempdir, "cookies.sqlite"))
         with conn:
             res = conn.execute("select * from moz_cookies where host=\".hcaptcha.com\"")
@@ -239,50 +257,56 @@ def get_accessibility_cookie(link):
         pass
     return cookies
 
+def write_cookies(file, cookieJar):
+    with open(file, "w") as wf:
+        wf.write(json.dumps(cookieJar))
+
 def main(args, rotator):
-    if not check_domain_config(args.domain):
-        print("Unable to verify that %s is set up correctly for mail; check DNS configuration" % args.domain)
-        return
+    #if not check_domain_config(args.domain):
+    #    print("Unable to verify that %s is set up correctly for mail; check DNS configuration" % args.domain)
+    #    return
 
     es = EmailServer()
 
     count = 0
-    while count <1:
-        # fetch new instance IP
-        # TODO, invoke
-
-        addr = get_email_addr(args.domain)
-        print("Addr is: ", addr)
+    while count <args.max_count:
         count += 1
 
-        # Do the sign up
-        trigger_email("hcaptchatest4@pressers.name")
+        # fetch new instance IP
+        # TODO, invoke
+        with rotator:
 
-        return
+            addr = get_email_addr(args.domain)
+            #print("Addr is: ", addr)
+            
+            # Do the sign up
+            trigger_email(addr)
 
-        # Wait for email...
-        m = es.getEmail()
+            # Wait for email...
+            m = es.getEmail()
 
-        # Ge tthe body
-        body = emailHandler.decodeEmailBody(m)
+            # Ge tthe body
+            body = emailHandler.decodeEmailBody(m)
 
-        # Pull the link out of the body
-        link = get_accessibility_link(body)
+            # Pull the link out of the body
+            link = get_accessibility_link(body)
 
-        # Open that in a broswer, click the button, get cookie.
-        cookieJar = get_accessibility_cookie(link)
+            # Open that in a broswer, click the button, get cookie.
+            cookieJar = get_accessibility_cookie(link)
 
-        if test_cookie(cookieJar):
-            print("Success!", cookieJar)
-        else:
-            raise Exception("Cookie didn't work!")
-
-        # Write cookies somewhere?
+            print(cookieJar)
+            if test_cookie(cookieJar):
+                print("Success!", cookieJar)
+                write_cookies(args.outfile, cookieJar)
+            else:
+                raise Exception("Cookie didn't work!")
+        
+        sleep(args.period)
 
 if __name__=="__main__":
     args = parser.parse_args()
 
-    rotator = rotatorClasses[args.platform]
+    rotator = rotatorClasses[args.platform]()
 
     main(args, rotator)
 
