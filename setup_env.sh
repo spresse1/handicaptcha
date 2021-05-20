@@ -251,7 +251,7 @@ echo "SCP done"
 ssh -o "StrictHostKeyChecking=no" -i ./handicaptcha ubuntu@$INSTANCE_DNS \
 	"sudo apt-get update -y &&
 	sudo apt-get dist-upgrade -y &&
-	sudo apt-get install -y python3-pip xinit tigervnc-standalone-server x11-apps firefox firefox-geckodriver xdotool &&
+	sudo apt-get install -y python3-pip xinit tigervnc-standalone-server x11-apps firefox firefox-geckodriver xdotool imagemagick &&
 	sudo pip3 install awscli selenium && 
 	sudo pip3 install -r handicaptcha/requirements.txt"
 
