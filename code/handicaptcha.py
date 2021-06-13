@@ -207,7 +207,7 @@ def test_cookie(cookies):
         #print(tempdir)
         
         ffproc = subprocess.Popen(
-            ["firefox", "https://hcaptcha.com", "--kiosk",
+            ["firefox", "https://handicaptcha.xyz", "--kiosk",
                 "--profile", tempdir],
             env=env)
         sleep(15)
@@ -232,7 +232,7 @@ def test_cookie(cookies):
         # TLDR: hCaptcha accessibility behaves in an unexpected way, this 
         # works around that
         #print("pressing tab")
-        for x in range(15):
+        for x in range(4):
             subprocess.run(
                 ["xdotool", "key", "Tab"],
                 env=env)
@@ -243,10 +243,10 @@ def test_cookie(cookies):
             ["xdotool", "key", "shift+Tab"],
             env=env)
 
-        sleep(random.uniform(0,2))
-        subprocess.run(
-            ["xdotool", "key", "Tab"],
-            env=env)
+        # sleep(random.uniform(0,2))
+        # subprocess.run(
+        #     ["xdotool", "key", "Tab"],
+        #     env=env)
         sleep(random.uniform(0,2))
         print("Pressing enter to activate captcha")
         subprocess.run(
@@ -254,7 +254,7 @@ def test_cookie(cookies):
             env=env)
      
         # Now that we've activted the button, grab a screenshot to verify it turned green.
-        sleep(5)
+        sleep(15)
         print("Grabbing screencap")
         subprocess.run(
             ["import", "-window", "root", os.path.join(tempdir, "screenshot.png")],
@@ -264,7 +264,7 @@ def test_cookie(cookies):
         ffproc.kill()
 
         subprocess.run(
-            ["convert", os.path.join(tempdir, "screenshot.png"), "-crop", "34x34+228+855", os.path.join(tempdir, "screenshot_cropped.png")],
+            ["convert", os.path.join(tempdir, "screenshot.png"), "-crop", "400x100+0+0", os.path.join(tempdir, "screenshot_cropped.png")],
             env=env
         )
         #print(os.path.join(os.path.dirname(__file__), "reference_result.png"))
@@ -372,7 +372,7 @@ def main(args, rotator):
             # Open that in a broswer, click the button, get cookie.
             cookieJar = get_accessibility_cookie(link)
             # cookieJar = json.loads("""
-            # [{"id": 6, "originAttributes": "", "name": "hc_accessibility", "value": "IfJfJEmJaHm5Ystlnx8Bz6k3iGtCS5hSFOHo9a92BESII16p1LRO0AgLYODs8WTKUu90YRwSOY9a1VeCD/wAT2h6WABathAcpGLWZ0M2nCI5IwGAjDjLO4yBqwz2k4Jah2RYWGukR4v7Iw0OeyLVcFLoZd7JsuzZ72xbq8IT5alA2fMLxMUSywE7q2yC6mRrU1vTLswUMVNCiJ+wG9j5umRons9BMy+U5FMb1UMyKP+BJFus3kJ731dDw7HQk35SlK/vCBsWx9HqlmENtqmLK+vefQJndUtWEJwiSHr17vvwYoRxIR5b6j7zOxZCk0uTaLGqyRR01U+HAeQBUvX81/uRpH4w/sE1FOkAz7XrtWh5lZqkG9i9A6w3FlFk76qNOoc9IdhH7Wc9YEhZV8eXEoVCk+PZe1BHJhZyVw8MTuMTPHo1OeSglkGDDNBhGv7OlQ1PmJ0/o0eFI3aByRD+HQXZ6wBlVHo4", "host": ".hcaptcha.com", "path": "/", "expiry": 1621742599, "lastAccessed": 1621699399315867, "creationTime": 1621699399315867, "isSecure": 1, "isHttpOnly": 0, "inBrowserElement": 0, "sameSite": 0, "rawSameSite": 0, "schemeMap": 2}, {"id": 8, "originAttributes": "", "name": "session", "value": "7f4c66b1-f291-40d2-b320-31d77e14fd48", "host": ".hcaptcha.com", "path": "/", "expiry": 1624377799, "lastAccessed": 1621699399317173, "creationTime": 1621699381972405, "isSecure": 1, "isHttpOnly": 1, "inBrowserElement": 0, "sameSite": 0, "rawSameSite": 0, "schemeMap": 2}]
+            # [{"id": 7, "originAttributes": "", "name": "hc_accessibility", "value": "RFjqZUJSZ1vfyaI2MOEpv5inC8Yvc3CGfcas4uoT1SEolvDwkbXR4Dt5lLLrB1a6PfCuQKWysqH2/wuUtqx3aXTjP49tGCQzwJxZhp4Rn5IeFyAamjdG3rOtSg0qTYY8nZ+qS1niCcV0oIXiG1T9D6dvIPJUeKfU6HuxE0pzBb9fIS6Tps3eHcYh5e7MfFU8BnXgCgNKMYEkElpGH+mvFxEJ18/RHNVSw/WFmsMTZd+Fmq5ZR1Z057rq9B85SoE4uPXNrC67Tk78gOc7HNH65HsKo1nKK/WNmxLtMurB/l7Sc65vJ5qRMwBRFqkNGmlz5kYUvTBO36fjuBEE9ih5anYDBFzZ/zL4fWI7RWoi+glEYVhx55W7XkyVA0gfKoNm/pvcWb7Ca80JVUcgQvO9DkrERiPaLU9q4uFAOLQsKkyvE3pJNyca65l6fmEkeYdWlbr/qgEjwUXAvA1knphATswvPBwRPMTS", "host": ".hcaptcha.com", "path": "/", "expiry": 1622536123, "lastAccessed": 1622492923206085, "creationTime": 1622492923206085, "isSecure": 1, "isHttpOnly": 0, "inBrowserElement": 0, "sameSite": 0, "rawSameSite": 0, "schemeMap": 2}, {"id": 9, "originAttributes": "", "name": "session", "value": "ae831e77-7e0e-40ae-ba26-987279c39807", "host": ".hcaptcha.com", "path": "/", "expiry": 1625171323, "lastAccessed": 1622492923206244, "creationTime": 1622492906680332, "isSecure": 1, "isHttpOnly": 1, "inBrowserElement": 0, "sameSite": 0, "rawSameSite": 0, "schemeMap": 2}]
             # """)
             print("Cookie jar:")
             print(cookieJar)
